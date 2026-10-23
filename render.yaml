@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: topper-notes
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    disk:
+      name: topper-notes-data
+      mountPath: /opt/render/project/src/storage
+      sizeGB: 1
+    envVars:
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: STORAGE_DIR
+        value: /opt/render/project/src/storage

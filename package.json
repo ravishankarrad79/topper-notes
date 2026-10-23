@@ -1,0 +1,12 @@
+{
+  "name": "topper-notes",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Topper Notes study PDF library with persistent server-side uploads",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
