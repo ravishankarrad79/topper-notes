@@ -93,7 +93,7 @@ const server = http.createServer(async (req, res) => {
       const paid = req.headers['x-document-paid'] === 'true';
       const price = paid ? Number(req.headers['x-document-price']) : 0;
       if (!title || title.length > 100) return json(res, 400, { error: 'Enter a title up to 100 characters.' });
-      if (!['Social Science', 'Geography', 'Polity', 'Economics', 'Class 10', 'Class 12', 'Master Computer', 'All Competition', 'Other'].includes(category)) return json(res, 400, { error: 'Choose a valid subject.' });
+      if (!['Polity', 'Class 10', 'Class 12', 'Master Computer', 'All Competition', 'Other'].includes(category)) return json(res, 400, { error: 'Choose a valid subject.' });
       if (paid && (!Number.isFinite(price) || price < 1 || price > 100000)) return json(res, 400, { error: 'Enter a valid price.' });
       const pdf = await readBody(req);
       if (!pdf.subarray(0, 5).equals(Buffer.from('%PDF-'))) return json(res, 400, { error: 'The selected file is not a valid PDF.' });
@@ -118,4 +118,4 @@ const server = http.createServer(async (req, res) => {
     json(res, 500, { error: 'Server could not complete the request.' });
   }
 });
-fs.mkdir(DATA_DIR, { recursive: true }).then(() => server.listen(PORT, '0.0.0.0', () => console.log('Topper Notes listening on port ' + PORT))).catch(err => { console.error(err); process.exit(1); });
+fs.mkdir(DATA_DIR, { recursive: true }).then(() => server.listen(PORT, '0.0.0.0', () => console.log('Education Helping listening on port ' + PORT))).catch(err => { console.error(err); process.exit(1); });
