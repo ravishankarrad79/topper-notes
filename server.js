@@ -1,5 +1,6 @@
 const http = require('node:http');
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
@@ -108,7 +109,7 @@ const server = http.createServer(async (req, res) => {
       const doc = (await readDocs()).find(item => item.id === match[1]);
       if (!doc) return json(res, 404, { error: 'PDF not found.' });
       res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline; filename="study-resource.pdf"', 'X-Content-Type-Options': 'nosniff' });
-      return fs.createReadStream(path.join(PDF_DIR, doc.filename)).pipe(res);
+      return fsSync.createReadStream(path.join(PDF_DIR, doc.filename)).pipe(res);
     }
     json(res, 404, { error: 'Not found.' });
   } catch (err) {
