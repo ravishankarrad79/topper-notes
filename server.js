@@ -56,6 +56,18 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   try {
     const url = new URL(req.url, 'http://localhost');
+    const staticAssets = {
+      '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json; charset=utf-8'],
+      '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
+      '/icon-192.png': ['icon-192.png', 'image/png'],
+      '/icon-512.png': ['icon-512.png', 'image/png'],
+      '/apple-touch-icon.png': ['icon-192.png', 'image/png']
+    };
+    if (req.method === 'GET' && staticAssets[url.pathname]) {
+      const [filename, contentType] = staticAssets[url.pathname];
+      res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=3600' });
+      return res.end(await fs.readFile(path.join(ROOT, filename)));
+    }
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end(await fs.readFile(path.join(ROOT, 'index.html')));
