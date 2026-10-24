@@ -21,11 +21,11 @@ Render Free web services have an ephemeral filesystem, so local uploads disappea
 3. In Supabase **Storage**, create a **private** bucket named `study-pdfs`.
 4. In Render service **Settings → Environment**, add:
    - `SUPABASE_URL`: Supabase project URL.
-   - `SUPABASE_SECRET_KEY`: a Supabase secret key (`sb_secret_...`). The server also accepts a legacy service-role key.
+   - `SUPABASE_SECRET_KEY`: a Supabase secret key (`sb_secret_...`). Copy it into this variable's **Value** field, not `SUPABASE_URL`.
    - `SUPABASE_BUCKET`: `study-pdfs` (optional; this is the default).
 5. Save changes and wait for Render to deploy. Then upload the PDFs again.
 
-The secret key must stay in Render's environment settings. Never put it in GitHub, this README, or browser code. PDFs are served through the backend so the Storage bucket can remain private. If cloud storage is not configured on Render, uploads are blocked with an explanatory message instead of being saved temporarily.
+The secret key must stay in Render's environment settings. Never put it in GitHub, this README, browser code, or a URL. PDFs are served through the Supabase SDK in the backend so the Storage bucket can remain private. If cloud storage is not configured on Render, uploads are blocked with an explanatory message instead of being saved temporarily.
 
 Supabase Free currently includes 1 GB file storage, but may pause a low-activity project after a week. No free hosting plan guarantees permanent availability; keep a separate copy of original PDFs. [Supabase plan limits](https://supabase.com/docs/guides/platform/billing-on-supabase) and [project pausing](https://supabase.com/docs/guides/platform/free-project-pausing).
 

@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { createClient } = require('@supabase/supabase-js');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ROOT = __dirname;
@@ -13,47 +14,40 @@ const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || 'study-pdfs';
 const SUPABASE_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_SECRET_KEY);
+const supabase = SUPABASE_CONFIGURED ? createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
+  auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false }
+}) : null;
 const MAX_BYTES = 20 * 1024 * 1024;
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const sessions = new Map();
 let failedLogins = 0;
 let blockedUntil = 0;
 
-function supabaseHeaders(extra = {}) {
-  const headers = { apikey: SUPABASE_SECRET_KEY, ...extra };
-  if (SUPABASE_SECRET_KEY.startsWith('eyJ')) headers.Authorization = 'Bearer ' + SUPABASE_SECRET_KEY;
-  return headers;
-}
-function supabaseObjectUrl(storagePath) {
-  const objectPath = storagePath.split('/').map(encodeURIComponent).join('/');
-  return `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_BUCKET)}/${objectPath}`;
+function logSupabaseError(operation, error) {
+  console.error('Supabase ' + operation + ' failed:', error?.code || error?.name || 'Unknown error');
 }
 async function readDocs() {
   if (SUPABASE_CONFIGURED) {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/documents?select=*&order=created_at.desc`, { headers: supabaseHeaders() });
-    if (!response.ok) throw new Error('Could not read cloud library: ' + await response.text());
-    return (await response.json()).map(row => ({ id: row.id, title: row.title, category: row.category, isPaid: row.is_paid, price: Number(row.price), size: row.size, storagePath: row.storage_path, createdAt: row.created_at }));
+    const { data, error } = await supabase.from('documents').select('*').order('created_at', { ascending: false });
+    if (error) { logSupabaseError('library read', error); throw new Error('Could not read cloud library. Check the Supabase settings.'); }
+    return data.map(row => ({ id: row.id, title: row.title, category: row.category, isPaid: row.is_paid, price: Number(row.price), size: row.size, storagePath: row.storage_path, createdAt: row.created_at }));
   }
   try { return JSON.parse(await fs.readFile(DB_FILE, 'utf8')); }
   catch (err) { if (err.code === 'ENOENT') return []; throw err; }
 }
 async function uploadCloudPdf(storagePath, pdf) {
-  const response = await fetch(supabaseObjectUrl(storagePath), { method: 'POST', headers: supabaseHeaders({ 'Content-Type': 'application/pdf', 'x-upsert': 'false' }), body: pdf });
-  if (!response.ok) throw new Error('Cloud PDF upload failed: ' + await response.text());
+  const { error } = await supabase.storage.from(SUPABASE_BUCKET).upload(storagePath, pdf, { contentType: 'application/pdf', upsert: false });
+  if (error) { logSupabaseError('PDF upload', error); throw new Error('Cloud PDF upload failed. Check the Supabase settings and bucket.'); }
 }
 async function readCloudPdf(storagePath) {
-  const response = await fetch(supabaseObjectUrl(storagePath), { headers: supabaseHeaders() });
-  if (!response.ok) throw new Error('Cloud PDF download failed: ' + await response.text());
-  return Buffer.from(await response.arrayBuffer());
+  const { data, error } = await supabase.storage.from(SUPABASE_BUCKET).download(storagePath);
+  if (error) { logSupabaseError('PDF download', error); throw new Error('Cloud PDF download failed. Check the Supabase settings and bucket.'); }
+  return Buffer.from(await data.arrayBuffer());
 }
 async function insertDoc(doc) {
   if (SUPABASE_CONFIGURED) {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/documents`, {
-      method: 'POST',
-      headers: supabaseHeaders({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
-      body: JSON.stringify({ id: doc.id, title: doc.title, category: doc.category, is_paid: doc.isPaid, price: doc.price, size: doc.size, storage_path: doc.storagePath, created_at: doc.createdAt })
-    });
-    if (!response.ok) throw new Error('Could not save PDF details in cloud database: ' + await response.text());
+    const { error } = await supabase.from('documents').insert({ id: doc.id, title: doc.title, category: doc.category, is_paid: doc.isPaid, price: doc.price, size: doc.size, storage_path: doc.storagePath, created_at: doc.createdAt });
+    if (error) { logSupabaseError('document save', error); throw new Error('Could not save PDF details in the cloud database.'); }
     return;
   }
   const docs = await readDocs(); docs.unshift(doc); await writeDocs(docs);
@@ -174,7 +168,7 @@ const server = http.createServer(async (req, res) => {
     }
     json(res, 404, { error: 'Not found.' });
   } catch (err) {
-    console.error(err);
+    console.error('Request failed:', err.name || 'Error', err.code || '');
     if (err.status === 413) return json(res, 413, { error: err.message });
     json(res, 500, { error: 'Server could not complete the request.' });
   }
