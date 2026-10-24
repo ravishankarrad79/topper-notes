@@ -8,3 +8,9 @@ services:
     envVars:
       - key: ADMIN_PASSWORD
         sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: study-pdfs

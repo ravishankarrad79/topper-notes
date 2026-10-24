@@ -1,6 +1,6 @@
-# Topper Notes
+# Education Helping
 
-A single-service website and API for a shared PDF library. The Node server serves `index.html`, accepts PDF uploads, and stores the PDF files plus metadata in `STORAGE_DIR`.
+A single-service website and API for a shared PDF library. The Node server serves `index.html`, accepts PDF uploads, and stores metadata plus PDF files either locally for development or in Supabase for durable hosting.
 
 ## Run locally
 
@@ -10,21 +10,27 @@ Install Node.js 20 or newer, then in this folder run:
 npm start
 ```
 
-No `npm install` is needed; the server uses Node.js built-in modules.
+Open http://localhost:3000. Without Supabase environment variables, local uploads are saved under `storage/` and remain on your computer.
 
-Open http://localhost:3000. Uploads are saved under `storage/` and persist between restarts on your computer.
+## Keep online uploads after Render restarts
 
-## Publish online with persistent uploads
+Render Free web services have an ephemeral filesystem, so local uploads disappear on spin-down, restart, or redeploy. Configure Supabase cloud storage before uploading PDFs to the live website:
 
-This project includes `render.yaml` for Render. Push this folder to a GitHub repository, then in Render choose **New → Blueprint**, connect the repository, review the service and persistent disk configuration, and deploy. The disk stores the uploaded PDFs across deploys. Use the generated `*.onrender.com` link to open the site.
+1. Create a Supabase project.
+2. In Supabase **SQL Editor**, run the contents of `supabase-setup.sql`.
+3. In Supabase **Storage**, create a **private** bucket named `study-pdfs`.
+4. In Render service **Settings → Environment**, add:
+   - `SUPABASE_URL`: Supabase project URL.
+   - `SUPABASE_SECRET_KEY`: a Supabase secret key (`sb_secret_...`). The server also accepts a legacy service-role key.
+   - `SUPABASE_BUCKET`: `study-pdfs` (optional; this is the default).
+5. Save changes and wait for Render to deploy. Then upload the PDFs again.
 
-The website needs to be served by this Node server; opening `index.html` directly or deploying it as a static-only site will not enable shared uploads. Uploads require the admin password configured in the server environment. Public visitors can browse and open PDFs but cannot upload. The sample cards are examples, and checkout for paid documents is still a demo.
+The secret key must stay in Render's environment settings. Never put it in GitHub, this README, or browser code. PDFs are served through the backend so the Storage bucket can remain private. If cloud storage is not configured on Render, uploads are blocked with an explanatory message instead of being saved temporarily.
 
-For local development, set an admin password before starting the server in PowerShell:
+Supabase Free currently includes 1 GB file storage, but may pause a low-activity project after a week. No free hosting plan guarantees permanent availability; keep a separate copy of original PDFs. [Supabase plan limits](https://supabase.com/docs/guides/platform/billing-on-supabase) and [project pausing](https://supabase.com/docs/guides/platform/free-project-pausing).
 
-```powershell
-$env:ADMIN_PASSWORD = "choose-a-long-private-password"
-npm start
-```
+The website requires this Node server; opening `index.html` directly or deploying as a static-only site will not enable shared uploads. Uploads require the admin password configured on the server. The sample cards are examples, and checkout for paid documents is still a demo.
 
-On Render, set the `ADMIN_PASSWORD` environment variable in the service settings (the Blueprint prompts for it). Do not put the real password in source files or GitHub.
+## Admin password
+
+Set `ADMIN_PASSWORD` in Render's service environment settings. Do not put the real password in source files or GitHub.

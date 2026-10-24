@@ -9,15 +9,54 @@ const ROOT = __dirname;
 const DATA_DIR = path.resolve(process.env.STORAGE_DIR || path.join(ROOT, 'storage'));
 const PDF_DIR = path.join(DATA_DIR, 'pdfs');
 const DB_FILE = path.join(DATA_DIR, 'documents.json');
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || 'study-pdfs';
+const SUPABASE_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_SECRET_KEY);
 const MAX_BYTES = 20 * 1024 * 1024;
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const sessions = new Map();
 let failedLogins = 0;
 let blockedUntil = 0;
 
+function supabaseHeaders(extra = {}) {
+  const headers = { apikey: SUPABASE_SECRET_KEY, ...extra };
+  if (SUPABASE_SECRET_KEY.startsWith('eyJ')) headers.Authorization = 'Bearer ' + SUPABASE_SECRET_KEY;
+  return headers;
+}
+function supabaseObjectUrl(storagePath) {
+  const objectPath = storagePath.split('/').map(encodeURIComponent).join('/');
+  return `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_BUCKET)}/${objectPath}`;
+}
 async function readDocs() {
+  if (SUPABASE_CONFIGURED) {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/documents?select=*&order=created_at.desc`, { headers: supabaseHeaders() });
+    if (!response.ok) throw new Error('Could not read cloud library: ' + await response.text());
+    return (await response.json()).map(row => ({ id: row.id, title: row.title, category: row.category, isPaid: row.is_paid, price: Number(row.price), size: row.size, storagePath: row.storage_path, createdAt: row.created_at }));
+  }
   try { return JSON.parse(await fs.readFile(DB_FILE, 'utf8')); }
   catch (err) { if (err.code === 'ENOENT') return []; throw err; }
+}
+async function uploadCloudPdf(storagePath, pdf) {
+  const response = await fetch(supabaseObjectUrl(storagePath), { method: 'POST', headers: supabaseHeaders({ 'Content-Type': 'application/pdf', 'x-upsert': 'false' }), body: pdf });
+  if (!response.ok) throw new Error('Cloud PDF upload failed: ' + await response.text());
+}
+async function readCloudPdf(storagePath) {
+  const response = await fetch(supabaseObjectUrl(storagePath), { headers: supabaseHeaders() });
+  if (!response.ok) throw new Error('Cloud PDF download failed: ' + await response.text());
+  return Buffer.from(await response.arrayBuffer());
+}
+async function insertDoc(doc) {
+  if (SUPABASE_CONFIGURED) {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/documents`, {
+      method: 'POST',
+      headers: supabaseHeaders({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
+      body: JSON.stringify({ id: doc.id, title: doc.title, category: doc.category, is_paid: doc.isPaid, price: doc.price, size: doc.size, storage_path: doc.storagePath, created_at: doc.createdAt })
+    });
+    if (!response.ok) throw new Error('Could not save PDF details in cloud database: ' + await response.text());
+    return;
+  }
+  const docs = await readDocs(); docs.unshift(doc); await writeDocs(docs);
 }
 async function writeDocs(docs) {
   const temp = DB_FILE + '.' + process.pid + '.tmp';
@@ -29,7 +68,7 @@ function json(res, status, data, headers = {}) {
   res.end(JSON.stringify(data));
 }
 function safeDoc(doc) {
-  const { filename, ...safe } = doc;
+  const { filename, storagePath, ...safe } = doc;
   return { ...safe, fileUrl: '/api/documents/' + encodeURIComponent(doc.id) + '/file' };
 }
 function cookieToken(req) {
@@ -100,6 +139,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/documents') return json(res, 200, (await readDocs()).map(safeDoc));
     if (req.method === 'POST' && url.pathname === '/api/documents') {
       if (!isAdmin(req)) return json(res, 401, { error: 'Admin login required.' });
+      if (process.env.RENDER && !SUPABASE_CONFIGURED) return json(res, 503, { error: 'Permanent cloud storage is not set up yet. Ask the site owner to finish storage setup before uploading PDFs.' });
+      if ((SUPABASE_URL && !SUPABASE_SECRET_KEY) || (!SUPABASE_URL && SUPABASE_SECRET_KEY)) return json(res, 503, { error: 'Cloud storage needs both SUPABASE_URL and SUPABASE_SECRET_KEY.' });
       let title; try { title = decodeURIComponent(req.headers['x-document-title'] || '').trim(); } catch { return json(res, 400, { error: 'Invalid title.' }); }
       const category = req.headers['x-document-category'] || '';
       const paid = req.headers['x-document-paid'] === 'true';
@@ -109,18 +150,26 @@ const server = http.createServer(async (req, res) => {
       if (paid && (!Number.isFinite(price) || price < 1 || price > 100000)) return json(res, 400, { error: 'Enter a valid price.' });
       const pdf = await readBody(req);
       if (!pdf.subarray(0, 5).equals(Buffer.from('%PDF-'))) return json(res, 400, { error: 'The selected file is not a valid PDF.' });
-      await fs.mkdir(PDF_DIR, { recursive: true });
-      const id = crypto.randomUUID(); const filename = id + '.pdf';
-      await fs.writeFile(path.join(PDF_DIR, filename), pdf, { flag: 'wx' });
-      const doc = { id, title, category, isPaid: paid, price, size: (pdf.length / 1048576).toFixed(1) + ' MB', filename, createdAt: new Date().toISOString() };
-      const docs = await readDocs(); docs.unshift(doc); await writeDocs(docs);
+      const id = crypto.randomUUID(); const storagePath = id + '.pdf';
+      if (SUPABASE_CONFIGURED) await uploadCloudPdf(storagePath, pdf);
+      else { await fs.mkdir(PDF_DIR, { recursive: true }); await fs.writeFile(path.join(PDF_DIR, storagePath), pdf, { flag: 'wx' }); }
+      const doc = { id, title, category, isPaid: paid, price, size: (pdf.length / 1048576).toFixed(1) + ' MB', ...(SUPABASE_CONFIGURED ? { storagePath } : { filename: storagePath }), createdAt: new Date().toISOString() };
+      await insertDoc(doc);
       return json(res, 201, safeDoc(doc));
     }
     const match = req.method === 'GET' && url.pathname.match(/^\/api\/documents\/([a-f0-9-]+)\/file$/i);
     if (match) {
       const doc = (await readDocs()).find(item => item.id === match[1]);
       if (!doc) return json(res, 404, { error: 'PDF not found.' });
-      res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline; filename="study-resource.pdf"', 'X-Content-Type-Options': 'nosniff' });
+      const download = url.searchParams.get('download') === '1';
+      const safeTitle = String(doc.title || 'study-resource').replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, 80) || 'study-resource';
+      const disposition = download ? 'attachment' : 'inline';
+      if (doc.storagePath && SUPABASE_CONFIGURED) {
+        const pdf = await readCloudPdf(doc.storagePath);
+        res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `${disposition}; filename="study-resource.pdf"; filename*=UTF-8''${encodeURIComponent(safeTitle + '.pdf')}`, 'X-Content-Type-Options': 'nosniff' });
+        return res.end(pdf);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `${disposition}; filename="study-resource.pdf"; filename*=UTF-8''${encodeURIComponent(safeTitle + '.pdf')}`, 'X-Content-Type-Options': 'nosniff' });
       return fsSync.createReadStream(path.join(PDF_DIR, doc.filename)).pipe(res);
     }
     json(res, 404, { error: 'Not found.' });
